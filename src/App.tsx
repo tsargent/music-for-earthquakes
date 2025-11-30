@@ -46,6 +46,20 @@ export default function EarthquakePage() {
     <div className="min-h-screen flex flex-col bg-black text-white">
       <div className="flex-1 relative">
         <EarthquakeCanvas events={visualEvents} />
+
+        <div
+          className={`
+      pointer-events-none
+      absolute inset-0 z-20
+      flex items-center justify-center
+      transition-opacity duration-1000
+      ${isPlaying ? "opacity-0" : "opacity-100"}
+    `}
+        >
+          <h1 className="text-4xl font-normal tracking-tight text-white/80">
+            Music for Earthquakes
+          </h1>
+        </div>
       </div>
 
       <div className="p-4 flex items-center justify-center gap-4 border-t border-neutral-800">
