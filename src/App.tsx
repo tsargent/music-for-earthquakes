@@ -1,64 +1,67 @@
 import { useState, useEffect } from "react";
-import "./App.css";
 import { useEarthquakeSonifier } from "./hooks/useEarthquakeSonifier";
+import { EarthquakeCanvas, type EarthquakeFeature } from "./EarthquakeCanvas";
 
-const URI = `https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2025-11-29T20:00:00`;
+export default function EarthquakePage() {
+  const [data, setData] = useState<any | null>(null);
+  const [visualEvents, setVisualEvents] = useState<EarthquakeFeature[]>([]);
 
-function App() {
-  const [data, setData] = useState(null);
   useEffect(() => {
-    async function fetchData() {
-      const response = await fetch(URI);
-      const json = await response.json();
+    async function load() {
+      const res = await fetch(
+        "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2025-11-29T20:00:00"
+      );
+      const json = await res.json();
       setData(json);
     }
-    fetchData();
+    load();
   }, []);
+
+  const DURATION = 60;
 
   const { isSupported, isReady, isPlaying, start, stop } =
     useEarthquakeSonifier({
       features: data,
-      durationSec: 60, // compress whole window into a 60s piece
+      durationSec: DURATION,
+      onEvent: (feature) => {
+        // called in sync with AudioContext schedule
+        setVisualEvents((prev) => [...prev, feature]);
+      },
     });
 
-  if (!isSupported) {
-    return <p>Web Audio API not supported in this browser.</p>;
-  }
-
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-black text-white">
-      <h1 className="text-xl font-medium tracking-tight">
-        Earthquake Sonifier
-      </h1>
-      <p className="text-sm text-neutral-400 max-w-sm text-center">
-        Plays earthquakes from the USGS feed as pitched, spatialized tones,
-        compressed into a short timeline.
-      </p>
+    <div className="min-h-screen flex flex-col bg-black text-white">
+      <div className="flex-1 relative">
+        <EarthquakeCanvas events={visualEvents} />
+      </div>
 
-      <button
-        disabled={!isReady || !data || isPlaying}
-        onClick={start}
-        className="px-4 py-2 border border-neutral-600 rounded-full text-sm"
-      >
-        {!data
-          ? "Loading data…"
-          : !isReady
-          ? "Audio not ready"
-          : isPlaying
-          ? "Playing…"
-          : "Play timeline"}
-      </button>
-
-      {isPlaying && (
+      <div className="p-4 flex items-center justify-center gap-4 border-t border-neutral-800">
         <button
-          onClick={stop}
-          className="px-3 py-1 text-xs border border-neutral-700 rounded-full"
+          disabled={!isSupported || !isReady || !data || isPlaying}
+          onClick={() => {
+            setVisualEvents([]); // clear previous drawing
+            start();
+          }}
+          className="px-4 py-2 border border-neutral-600 rounded-full text-sm"
         >
-          Stop
+          {!isSupported
+            ? "Web Audio not supported"
+            : !data
+            ? "Loading data…"
+            : isPlaying
+            ? "Playing…"
+            : "Play"}
         </button>
-      )}
+
+        {isPlaying && (
+          <button
+            onClick={stop}
+            className="px-3 py-1 text-xs border border-neutral-700 rounded-full"
+          >
+            Stop
+          </button>
+        )}
+      </div>
     </div>
   );
 }
-
-export default App;

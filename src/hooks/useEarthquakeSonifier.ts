@@ -1,7 +1,7 @@
 // useEarthquakeSonifier.ts
 import { useCallback, useEffect, useRef, useState } from "react";
 
-type EarthquakeFeature = {
+export type EarthquakeFeature = {
   properties: {
     mag: number;
     time: number; // Unix ms
@@ -12,7 +12,7 @@ type EarthquakeFeature = {
   };
 };
 
-type EarthquakeFeatureCollection = {
+export type EarthquakeFeatureCollection = {
   features: EarthquakeFeature[];
 };
 
@@ -20,6 +20,8 @@ type UseEarthquakeSonifierOptions = {
   features: EarthquakeFeatureCollection | null;
   /** How long (in seconds) the whole timeline should last. */
   durationSec?: number;
+  /** Called in sync with each event, based on AudioContext schedule. */
+  onEvent?: (feature: EarthquakeFeature) => void;
 };
 
 type UseEarthquakeSonifierReturn = {
@@ -53,7 +55,7 @@ type DroneNodes = {
 export function useEarthquakeSonifier(
   options: UseEarthquakeSonifierOptions
 ): UseEarthquakeSonifierReturn {
-  const { features, durationSec = 60 } = options;
+  const { features, durationSec = 60, onEvent } = options;
 
   const [isReady, setIsReady] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -63,8 +65,10 @@ export function useEarthquakeSonifier(
   const endTimeoutRef = useRef<number | null>(null);
   const transientNodesRef = useRef<Set<AudioScheduledSourceNode>>(new Set());
   const noiseBufferRef = useRef<AudioBuffer | null>(null);
+  const visualTimeoutsRef = useRef<number[]>([]);
 
   const BASE_GAIN = 0.12;
+
   const isSupported =
     typeof window !== "undefined" &&
     ("AudioContext" in window || "webkitAudioContext" in window);
@@ -165,7 +169,7 @@ export function useEarthquakeSonifier(
       const hitPan = ctx.createStereoPanner();
       hitPan.pan.setValueAtTime(panPos, time);
 
-      // Noise burst (louder, snappier)
+      // Noise burst
       const noiseSource = ctx.createBufferSource();
       noiseSource.buffer = getNoiseBuffer(ctx);
       const noiseFilter = ctx.createBiquadFilter();
@@ -194,7 +198,7 @@ export function useEarthquakeSonifier(
         transientNodesRef.current.delete(noiseSource);
       });
 
-      // Tuned click (also louder)
+      // Tuned click
       const clickOsc = ctx.createOscillator();
       clickOsc.type = "triangle";
       const baseFreq = 330;
@@ -232,7 +236,7 @@ export function useEarthquakeSonifier(
     const drone = ensureDrone(ctx);
     const now = ctx.currentTime;
 
-    // Fade in base drone
+    // Fade in drone
     drone.gain.gain.cancelScheduledValues(now);
     drone.gain.gain.setValueAtTime(0, now);
     drone.gain.gain.linearRampToValueAtTime(BASE_GAIN, now + 3);
@@ -245,20 +249,24 @@ export function useEarthquakeSonifier(
 
     const totalDuration = durationSec;
     const timeScale = spanMs / totalDuration;
-    const startOffset = 0.5;
+    const startOffset = 0.5; // seconds
+
+    // Clear any pending visual callbacks
+    visualTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
+    visualTimeoutsRef.current = [];
 
     for (const feature of quakes) {
       const { mag, time } = feature.properties;
       const [lon, lat, depthKm] = feature.geometry.coordinates;
 
       const relMs = time - minTime;
-      const t = now + startOffset + relMs / timeScale;
+      const t = now + startOffset + relMs / timeScale; // AudioContext time
 
       const magClamped = Math.max(0, Math.min(7, mag || 0));
       const depthClamped = Math.max(0, Math.min(700, depthKm || 0));
 
-      // 1. Master gain swell based on magnitude
-      const swellFactor = mapRange(magClamped, 0, 7, 1.05, 2.0); // up to 2x
+      // 1. Master gain swell
+      const swellFactor = mapRange(magClamped, 0, 7, 1.05, 2.0);
       const peakGain = BASE_GAIN * swellFactor;
 
       drone.gain.gain.cancelScheduledValues(t);
@@ -266,7 +274,7 @@ export function useEarthquakeSonifier(
       drone.gain.gain.linearRampToValueAtTime(peakGain, t + 0.4);
       drone.gain.gain.linearRampToValueAtTime(BASE_GAIN, t + 3.0);
 
-      // 2. Depth → big filter sweep
+      // 2. Filter sweep (depth)
       const targetCutoff = mapRange(depthClamped, 0, 700, 9000, 250);
       const baseCutoff = 1800;
 
@@ -278,7 +286,7 @@ export function useEarthquakeSonifier(
       drone.filter.frequency.linearRampToValueAtTime(targetCutoff, t + 0.7);
       drone.filter.frequency.linearRampToValueAtTime(baseCutoff, t + 4.0);
 
-      // 3. Latitude → wider, quicker pan sweep
+      // 3. Pan sweep (latitude)
       const panTarget = mapRange(lat, -90, 90, -1, 1);
       const basePan = 0;
 
@@ -287,10 +295,10 @@ export function useEarthquakeSonifier(
       drone.panner.pan.linearRampToValueAtTime(panTarget, t + 0.5);
       drone.panner.pan.linearRampToValueAtTime(basePan, t + 2.5);
 
-      // 4. Magnitude → stronger detune shimmer
+      // 4. Detune shimmer (magnitude)
       const magNorm = mapRange(magClamped, 0, 7, 0, 1);
-      const detuneRangeCents = 120; // much wider
-      const detuneTarget = (magNorm - 0.5) * 2 * detuneRangeCents; // -120..120
+      const detuneRangeCents = 120;
+      const detuneTarget = (magNorm - 0.5) * 2 * detuneRangeCents;
 
       for (const osc of drone.oscs) {
         osc.detune.cancelScheduledValues(t);
@@ -299,13 +307,22 @@ export function useEarthquakeSonifier(
         osc.detune.linearRampToValueAtTime(0, t + 5.0);
       }
 
-      // 5. Percussive hit on top
+      // 5. Percussive hit
       schedulePercussiveHit(ctx, drone, {
         time: t,
         mag,
         lat,
         depthKm,
       });
+
+      // 6. Visual callback based on AudioContext time
+      if (onEvent) {
+        const delayMs = Math.max(0, (t - ctx.currentTime) * 1000);
+        const timeoutId = window.setTimeout(() => {
+          onEvent(feature);
+        }, delayMs);
+        visualTimeoutsRef.current.push(timeoutId);
+      }
     }
 
     setIsPlaying(true);
@@ -327,6 +344,7 @@ export function useEarthquakeSonifier(
   }, [
     features,
     durationSec,
+    onEvent,
     getAudioContext,
     ensureDrone,
     schedulePercussiveHit,
@@ -362,6 +380,9 @@ export function useEarthquakeSonifier(
     }
     transientNodesRef.current.clear();
 
+    visualTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
+    visualTimeoutsRef.current = [];
+
     if (endTimeoutRef.current) {
       window.clearTimeout(endTimeoutRef.current);
       endTimeoutRef.current = null;
@@ -379,6 +400,8 @@ export function useEarthquakeSonifier(
       }
       droneRef.current = null;
       noiseBufferRef.current = null;
+      visualTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
+      visualTimeoutsRef.current = [];
     };
   }, [stop]);
 
