@@ -18,9 +18,7 @@ export type EarthquakeFeatureCollection = {
 
 type UseEarthquakeSonifierOptions = {
   features: EarthquakeFeatureCollection | null;
-  /** How long (in seconds) the whole timeline should last. */
   durationSec?: number;
-  /** Called in sync with each event, based on AudioContext schedule. */
   onEvent?: (feature: EarthquakeFeature) => void;
 };
 
@@ -118,9 +116,9 @@ export function useEarthquakeSonifier(
     osc2.type = "sine";
     osc3.type = "sine";
 
-    osc1.frequency.value = 110; // A2
-    osc2.frequency.value = 220; // A3
-    osc3.frequency.value = 330; // E-ish
+    osc1.frequency.value = 110;
+    osc2.frequency.value = 220;
+    osc3.frequency.value = 330;
 
     filter.type = "lowpass";
     filter.frequency.value = 1800;
@@ -249,9 +247,9 @@ export function useEarthquakeSonifier(
 
     const totalDuration = durationSec;
     const timeScale = spanMs / totalDuration;
-    const startOffset = 0.5; // seconds
+    const startOffset = 0.5;
 
-    // Clear any pending visual callbacks
+    // clear old visual callbacks
     visualTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
     visualTimeoutsRef.current = [];
 
@@ -260,7 +258,7 @@ export function useEarthquakeSonifier(
       const [lon, lat, depthKm] = feature.geometry.coordinates;
 
       const relMs = time - minTime;
-      const t = now + startOffset + relMs / timeScale; // AudioContext time
+      const t = now + startOffset + relMs / timeScale;
 
       const magClamped = Math.max(0, Math.min(7, mag || 0));
       const depthClamped = Math.max(0, Math.min(700, depthKm || 0));
@@ -274,7 +272,7 @@ export function useEarthquakeSonifier(
       drone.gain.gain.linearRampToValueAtTime(peakGain, t + 0.4);
       drone.gain.gain.linearRampToValueAtTime(BASE_GAIN, t + 3.0);
 
-      // 2. Filter sweep (depth)
+      // 2. Filter sweep
       const targetCutoff = mapRange(depthClamped, 0, 700, 9000, 250);
       const baseCutoff = 1800;
 
@@ -286,7 +284,7 @@ export function useEarthquakeSonifier(
       drone.filter.frequency.linearRampToValueAtTime(targetCutoff, t + 0.7);
       drone.filter.frequency.linearRampToValueAtTime(baseCutoff, t + 4.0);
 
-      // 3. Pan sweep (latitude)
+      // 3. Pan sweep
       const panTarget = mapRange(lat, -90, 90, -1, 1);
       const basePan = 0;
 
@@ -295,7 +293,7 @@ export function useEarthquakeSonifier(
       drone.panner.pan.linearRampToValueAtTime(panTarget, t + 0.5);
       drone.panner.pan.linearRampToValueAtTime(basePan, t + 2.5);
 
-      // 4. Detune shimmer (magnitude)
+      // 4. Detune shimmer
       const magNorm = mapRange(magClamped, 0, 7, 0, 1);
       const detuneRangeCents = 120;
       const detuneTarget = (magNorm - 0.5) * 2 * detuneRangeCents;
@@ -315,7 +313,7 @@ export function useEarthquakeSonifier(
         depthKm,
       });
 
-      // 6. Visual callback based on AudioContext time
+      // 6. Visual callback (AudioContext is source of truth)
       if (onEvent) {
         const delayMs = Math.max(0, (t - ctx.currentTime) * 1000);
         const timeoutId = window.setTimeout(() => {
@@ -355,22 +353,24 @@ export function useEarthquakeSonifier(
     const ctx = audioCtxRef.current;
     const drone = droneRef.current;
 
+    // Stop/fade drone
     if (ctx && drone) {
       const now = ctx.currentTime;
 
       drone.gain.gain.cancelScheduledValues(now);
       drone.gain.gain.setValueAtTime(drone.gain.gain.value, now);
-      drone.gain.gain.linearRampToValueAtTime(0, now + 1.5);
+      drone.gain.gain.linearRampToValueAtTime(0, now + 0.5);
 
       for (const osc of drone.oscs) {
         try {
-          osc.stop(now + 2);
+          osc.stop(now + 0.6);
         } catch {
           // ignore
         }
       }
     }
 
+    // Stop transients
     for (const node of transientNodesRef.current) {
       try {
         node.stop();
@@ -380,13 +380,18 @@ export function useEarthquakeSonifier(
     }
     transientNodesRef.current.clear();
 
+    // Clear visual callbacks
     visualTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
     visualTimeoutsRef.current = [];
 
+    // Clear end timer
     if (endTimeoutRef.current) {
       window.clearTimeout(endTimeoutRef.current);
       endTimeoutRef.current = null;
     }
+
+    // Allow a fresh drone on next start
+    droneRef.current = null;
 
     setIsPlaying(false);
   }, []);
@@ -398,7 +403,6 @@ export function useEarthquakeSonifier(
         audioCtxRef.current.close();
         audioCtxRef.current = null;
       }
-      droneRef.current = null;
       noiseBufferRef.current = null;
       visualTimeoutsRef.current.forEach((id) => window.clearTimeout(id));
       visualTimeoutsRef.current = [];

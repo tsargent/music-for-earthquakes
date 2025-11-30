@@ -1,16 +1,6 @@
 // EarthquakeCanvas.tsx
 import { useEffect, useRef } from "react";
-
-export type EarthquakeFeature = {
-  properties: {
-    mag: number;
-    time: number;
-    place: string;
-  };
-  geometry: {
-    coordinates: [number, number, number]; // [lon, lat, depthKm]
-  };
-};
+import type { EarthquakeFeature } from "./hooks/useEarthquakeSonifier";
 
 type Props = {
   events: EarthquakeFeature[];
@@ -19,13 +9,13 @@ type Props = {
 export function EarthquakeCanvas({ events }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Simple projection lon/lat -> x/y
   const project = (lon: number, lat: number, width: number, height: number) => {
     const x = ((lon + 180) / 360) * width;
     const y = height * (1 - (lat + 90) / 180);
     return { x, y };
   };
 
+  // setup & resize
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -44,7 +34,6 @@ export function EarthquakeCanvas({ events }: Props) {
         0,
         0
       );
-      // Optional: clear background on resize
       ctx.fillStyle = "black";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
     };
@@ -54,26 +43,33 @@ export function EarthquakeCanvas({ events }: Props) {
     return () => window.removeEventListener("resize", resize);
   }, []);
 
-  // Draw the latest event when events[] changes
+  // draw or clear when events change
   useEffect(() => {
-    if (events.length === 0) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
+    const { width, height } = canvas;
+
+    if (events.length === 0) {
+      // clear on reset/stop
+      ctx.fillStyle = "black";
+      ctx.fillRect(0, 0, width, height);
+      return;
+    }
+
     const last = events[events.length - 1];
     const { mag } = last.properties;
     const [lon, lat, depthKm] = last.geometry.coordinates;
 
-    const { width, height } = canvas;
     const { x, y } = project(lon, lat, width, height);
 
     const radius = 3 + Math.max(0, mag) * 1.5;
     const depthNorm = Math.max(0, Math.min(700, depthKm || 0)) / 700;
     const alpha = 0.2 + (1 - depthNorm) * 0.7;
 
-    // Optional: fade the whole canvas a bit each event to create trails
+    // fade trails a bit
     ctx.fillStyle = "rgba(0, 0, 0, 0.08)";
     ctx.fillRect(0, 0, width, height);
 

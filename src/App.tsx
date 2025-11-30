@@ -6,6 +6,16 @@ export default function EarthquakePage() {
   const [data, setData] = useState<any | null>(null);
   const [visualEvents, setVisualEvents] = useState<EarthquakeFeature[]>([]);
 
+  const handleStart = async () => {
+    setVisualEvents([]); // clear canvas state
+    await start();
+  };
+
+  const handleStop = () => {
+    stop();
+    setVisualEvents([]); // clear canvas state
+  };
+
   useEffect(() => {
     async function load() {
       const res = await fetch(
@@ -40,7 +50,7 @@ export default function EarthquakePage() {
           disabled={!isSupported || !isReady || !data || isPlaying}
           onClick={() => {
             setVisualEvents([]); // clear previous drawing
-            start();
+            handleStart();
           }}
           className="px-4 py-2 border border-neutral-600 rounded-full text-sm"
         >
@@ -55,7 +65,7 @@ export default function EarthquakePage() {
 
         {isPlaying && (
           <button
-            onClick={stop}
+            onClick={handleStop}
             className="px-3 py-1 text-xs border border-neutral-700 rounded-full"
           >
             Stop
